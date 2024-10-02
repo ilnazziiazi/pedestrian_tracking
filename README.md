@@ -10,3 +10,6 @@
 |Зиязиев Ильназ|@ilnazzia|ilnazzia|
 |Петров Андрей|@andreyabox|andreyabox|
 |Янышев Дмитрий|@yanyshev_dima|yanyshev|
+
+## License
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
