@@ -1,12 +1,13 @@
 import os
-from typing import Tuple, List, Any
+from typing import Tuple, List
 import yaml
 import zipfile
 from pathlib import Path
 from fastapi import UploadFile, HTTPException
+import asyncio
 
-# Сохранение и распаковка данных
-def save_and_unpack(archive: UploadFile, output_dir: str) -> tuple[Path | None, Path | None, list[Any], list[Any]]:
+# Cохранение и распаковка данных
+async def save_and_unpack(archive: UploadFile, output_dir: str) -> Tuple[Path, Path, Path]:
     temp_dir = Path(output_dir)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -17,74 +18,60 @@ def save_and_unpack(archive: UploadFile, output_dir: str) -> tuple[Path | None, 
     if not zipfile.is_zipfile(archive_path):
         raise HTTPException(status_code=400, detail="Файл должен быть zip-архивом")
 
-    with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-        zip_ref.extractall(temp_dir)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, zipfile.ZipFile(archive_path, 'r').extractall, temp_dir)
 
     images_path = None
     labels_path = None
     data_yaml_path = None
 
-    # Извлекаем yaml-файл с классами
+    # Поиск data.yaml и папок images и labels
     for root, dirs, files in os.walk(temp_dir):
         if "data.yaml" in files:
             data_yaml_path = Path(root) / "data.yaml"
-            break
-
-    if not data_yaml_path:
-        raise HTTPException(
-            status_code=400,
-            detail="YAML-файл с классами не найден в архиве"
-        )
-
-    # Извлекаем папки с изображениями и боксами
-    for root, dirs, _ in os.walk(temp_dir):
         if "images" in dirs and "labels" in dirs:
             images_path = Path(root) / "images"
             labels_path = Path(root) / "labels"
-            break
+            if data_yaml_path and images_path and labels_path:
+                break
 
-    if not images_path:
-        raise HTTPException(
-            status_code=400,
-            detail="Папка images не найдена в архиве"
-        )
+    if not data_yaml_path:
+        raise HTTPException(status_code=400, detail="YAML-файл с классами не найден в архиве")
+    if not images_path or not labels_path:
+        raise HTTPException(status_code=400, detail="Папки images и labels не найдены в архиве")
 
-    if not labels_path:
-        raise HTTPException(
-            status_code=400,
-            detail="Папка labels не найдена в архиве"
-        )
+    # Проверяем расширения
+    if not any(images_path.glob("*.jpg")):
+        raise HTTPException(status_code=400, detail="Папка images не содержит файлов с расширением .jpg")
+    if not any(labels_path.glob("*.txt")):
+        raise HTTPException(status_code=400, detail="Папка labels не содержит файлов с расширением .txt")
 
-    image_files = [file.stem for file in images_path.glob("*.jpg")]
-    label_files = [file.stem for file in labels_path.glob("*.txt")]
-
-    if not image_files or not label_files:
-        raise HTTPException(
-            status_code=400,
-            detail="Папки images и labels должны содержать файлы с расширением .jpg и .txt"
-        )
-
-    return data_yaml_path, images_path, labels_path, image_files, label_files
+    return data_yaml_path, images_path, labels_path
 
 # Загрузка классов
-def load_classes(data_yaml_path):
+async def load_classes(data_yaml_path: Path) -> List[str]:
+    loop = asyncio.get_event_loop()
     with open(data_yaml_path, 'r') as f:
-        data = yaml.safe_load(f)
+        data = await loop.run_in_executor(None, yaml.safe_load, f)
     return data['names']
 
-# Загрузка boxes
-def load_bounding_boxes(image_name, labels_dir):
-    label_file = labels_dir / f'{image_name}.txt'
-
-    if not label_file.exists():
-        print(f"Файл меток отсутствует: {label_file}")
-        return []
-
+# Загрузка bounding boxes
+def read_boxes(label_file):
     boxes = []
     with open(label_file, 'r') as file:
         for line in file:
             parts = line.strip().split()
-            class_id = int(parts[0])  # Идентификатор класса
+            class_id = int(parts[0])
             x_center, y_center, box_width, box_height = map(float, parts[1:5])
             boxes.append((class_id, x_center, y_center, box_width, box_height))
     return boxes
+
+async def load_bounding_boxes(image_name: str, labels_dir: Path) -> List[Tuple[int, float, float, float, float]]:
+    label_file = labels_dir / f"{image_name}.txt"
+
+    if not label_file.exists():
+        print(f"Файл отсутствует: {label_file}")
+        return []
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, read_boxes, label_file)
