@@ -1,7 +1,7 @@
 import multiprocessing
 from multiprocessing import Process, Queue
-from pydantic import BaseModel
-from typing import Literal, Dict, Any
+from pydantic import BaseModel, RootModel
+from typing import Literal, Dict, Any, List
 from fastapi import UploadFile, FastAPI, HTTPException
 from data_loader import save_and_unpack
 from preprocessing import process_data
@@ -21,28 +21,51 @@ app = FastAPI(
 )
 
 models: Dict[str, Any] = {}
+loaded_models: Dict[str, bool] = {}
 uploaded_data_paths: Dict[str, Path] = {}
 
 # Классы Request-Response
+# Гиперпараметры модели обучения
 class SVMHyper(BaseModel):
     C: float = 1.0
     kernel: Literal["linear", "poly", "rbf", "sigmoid", "precomputed"] = "linear"
     max_iter: int = 1000
 
-class FitRequest(BaseModel):
-    hyperparams: SVMHyper
-    timeout: int = 10
-
+# Upload архива
 class UploadResponse(BaseModel):
     status: str
     message: str
     data: dict
+
+# Fit
+class FitRequest(BaseModel):
+    hyperparams: SVMHyper
+    timeout: int = 10
 
 class FitResponse(BaseModel):
     status: str
     message: str
     duration: float = None
     model_id: str = None
+
+# Set
+class SetRequest(BaseModel):
+    id: str
+
+class SetResponse(BaseModel):
+    message: str
+
+# Model List
+class ModelData(BaseModel):
+    path: str
+    hyperparams: dict
+
+class ModelListItem(BaseModel):
+    id: str
+    data: ModelData
+
+class ModelListResponse(RootModel[List[ModelListItem]]):
+    pass
 
 # Функции
 def init_svm_model(hyperparams: SVMHyper) -> SVC:
@@ -51,7 +74,7 @@ def init_svm_model(hyperparams: SVMHyper) -> SVC:
 def get_files(path, extension):
     return [file.stem for file in path.glob(f"*.{extension}")]
 
-def save_model(model: SVC, hyperparams: SVMHyper) -> str:
+def save_model(model: SVC):
     model_id = str(uuid4())
     model_path = Path(f"./models/{model_id}.pkl")
     model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,12 +82,7 @@ def save_model(model: SVC, hyperparams: SVMHyper) -> str:
     with model_path.open("wb") as f:
         pickle.dump(model, f)
 
-    models[model_id] = {
-        "path": model_path,
-        "hyperparams": hyperparams.model_dump()
-    }
-
-    return model_id
+    return model_id, str(model_path)
 
 def processing_and_train(data_paths: Dict[str, Path], hyperparams: SVMHyper, queue: Queue):
     try:
@@ -86,12 +104,13 @@ def processing_and_train(data_paths: Dict[str, Path], hyperparams: SVMHyper, que
         svm = init_svm_model(hyperparams)
         svm.fit(X, y)
 
-        model_id = save_model(svm, hyperparams)
+        model_id, model_path = save_model(svm)
 
         queue.put({
             "status": "success",
             "message": "Модель обучилась",
-            "model_id": model_id
+            "model_id": model_id,
+            "model_path": model_path
         })
 
     except Exception as e:
@@ -164,6 +183,11 @@ async def fit(request: FitRequest) -> FitResponse:
 
         if not queue.empty():
             result = queue.get()
+            if result["status"] == "success":
+                models[result["model_id"]] = {
+                    "path": result["model_path"],
+                    "hyperparams": request.hyperparams.dict()
+                }
         else:
             result = {
                 "status": "error",
@@ -189,3 +213,28 @@ async def fit(request: FitRequest) -> FitResponse:
             status="error",
             message=f"Ошибка: {str(e)}"
         )
+
+@app.get("/list_models", response_model=ModelListResponse)
+async def list_models()-> ModelListResponse:
+    model_list = [ModelListItem(id=model_id,
+                                data=ModelData(path=str(models[model_id]["path"]),
+                                               hyperparams=models[model_id]["hyperparams"])
+                                )  for model_id in models.keys()
+                  ]
+    return ModelListResponse(root=model_list)
+
+@app.post("/set", response_model=SetResponse)
+async def set(request: SetRequest) -> SetResponse:
+    model_id = request.id
+    if model_id not in models.keys():
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body", "id"], "msg": f"Модель '{model_id}' не существует", "type": "value_error"}]
+        )
+
+    # Деактивируем другие модели, если они были активны
+    for loaded_model in loaded_models.keys():
+        loaded_models[loaded_model] = False
+
+    loaded_models[model_id] = True
+    return SetResponse(message=f"Модель '{model_id}' загружена")
