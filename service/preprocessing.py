@@ -179,4 +179,5 @@ async def process_data(data_yaml_path, images_path, labels_path, image_files,
     y = np.hstack((y_person_labels, y_background_labels))
     X, y = shuffle(X, y, random_state=42)
 
+
     return X, y
