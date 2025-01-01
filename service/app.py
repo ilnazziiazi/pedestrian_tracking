@@ -20,18 +20,20 @@ from uuid import uuid4
 from collections import defaultdict
 
 
-#app = FastAPI(
-#    docs_url="/api/openapi",
-#    openapi_url="/api/openapi.json"
-#)
-app = FastAPI()
+app = FastAPI(
+    docs_url="/api/openapi",
+    openapi_url="/api/openapi.json"
+)
+
 
 models: Dict[str, Any] = {}
 loaded_models: Dict[str, bool] = {}
 uploaded_data_paths: Dict[str, Path] = {}
 
+
 # Базовая директория
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
+
 
 # Классы Request-Response
 # Гиперпараметры модели обучения
@@ -77,6 +79,7 @@ class ModelListResponse(RootModel[List[ModelListItem]]):
     pass
 
 
+
 # Функции
 def load_classes(data_yaml_path):
     with open(data_yaml_path, 'r') as f:
@@ -102,6 +105,7 @@ def find_jpg_files_without_extension(folder_path):
     return jpg_files
 
 
+# Функции
 def init_svm_model(hyperparams: SVMHyper) -> SVC:
     return SVC(C=hyperparams.C, kernel=hyperparams.kernel, max_iter=hyperparams.max_iter)
 
@@ -257,6 +261,7 @@ async def list_models()-> ModelListResponse:
                   ]
     return ModelListResponse(root=model_list)
 
+
 @app.post("/set_models", response_model=SetResponse)
 async def set_models(request: SetRequest) -> SetResponse:
     model_id = request.id
@@ -272,6 +277,7 @@ async def set_models(request: SetRequest) -> SetResponse:
 
     loaded_models[model_id] = True
     return SetResponse(message=f"Модель '{model_id}' загружена")
+
 
 
 @app.post("/eda")
