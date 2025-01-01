@@ -1,28 +1,37 @@
 import multiprocessing
+import asyncio
+import uvicorn
+import shutil
+import pickle
+import yaml
+import time
+import os
+import zipfile
 from multiprocessing import Process, Queue
 from pydantic import BaseModel, RootModel
 from typing import Literal, Dict, Any, List
-from fastapi import UploadFile, FastAPI, HTTPException
+from fastapi import UploadFile, FastAPI, HTTPException, File
 from data_loader import save_and_unpack
 from preprocessing import process_data
 from sklearn.svm import SVC
-import time
 from http import HTTPStatus
-import asyncio
 from pathlib import Path
-import shutil
-import pickle
 from uuid import uuid4
-from uvicorn import run
+from collections import defaultdict
 
-app = FastAPI(
-    docs_url="/api/openapi",
-    openapi_url="/api/openapi.json"
-)
+
+#app = FastAPI(
+#    docs_url="/api/openapi",
+#    openapi_url="/api/openapi.json"
+#)
+app = FastAPI()
 
 models: Dict[str, Any] = {}
 loaded_models: Dict[str, bool] = {}
 uploaded_data_paths: Dict[str, Path] = {}
+
+# Базовая директория
+CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 # Классы Request-Response
 # Гиперпараметры модели обучения
@@ -67,7 +76,32 @@ class ModelListItem(BaseModel):
 class ModelListResponse(RootModel[List[ModelListItem]]):
     pass
 
+
 # Функции
+def load_classes(data_yaml_path):
+    with open(data_yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    return data['names']
+
+
+def find_jpg_files_without_extension(folder_path):
+    # Проверяем, существует ли путь
+    if not os.path.exists(folder_path):
+        print(f"Путь {folder_path} не существует.")
+        return []
+    
+    # Получаем список всех файлов и папок в указанной директории
+    all_items = os.listdir(folder_path)
+    
+    # Фильтруем только файлы с расширением .jpg и удаляем расширение
+    jpg_files = [
+        os.path.splitext(item)[0] for item in all_items
+        if os.path.isfile(os.path.join(folder_path, item)) and item.lower().endswith('.jpg')
+    ]
+    
+    return jpg_files
+
+
 def init_svm_model(hyperparams: SVMHyper) -> SVC:
     return SVC(C=hyperparams.C, kernel=hyperparams.kernel, max_iter=hyperparams.max_iter)
 
@@ -223,8 +257,8 @@ async def list_models()-> ModelListResponse:
                   ]
     return ModelListResponse(root=model_list)
 
-@app.post("/set", response_model=SetResponse)
-async def set(request: SetRequest) -> SetResponse:
+@app.post("/set_models", response_model=SetResponse)
+async def set_models(request: SetRequest) -> SetResponse:
     model_id = request.id
     if model_id not in models.keys():
         raise HTTPException(
@@ -238,3 +272,63 @@ async def set(request: SetRequest) -> SetResponse:
 
     loaded_models[model_id] = True
     return SetResponse(message=f"Модель '{model_id}' загружена")
+
+
+@app.post("/eda")
+async def eda(file: UploadFile = File(...)) -> Dict:
+    """
+    Exploratory Data Analysis (EDA) на основе загруженного архива изображений.
+    """
+    try:
+        # 1. Сохраняем zip-файл и распаковываем
+        zip_path = os.path.join(CURRENT_DIR, file.filename)
+        with open(zip_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(CURRENT_DIR)
+
+        destination_dir = CURRENT_DIR + '/data'
+        #destination_dir.mkdir(exist_ok=True)
+
+        data_yaml_path = destination_dir + '/data.yaml'
+        class_names = load_classes(data_yaml_path)
+
+        train_images_dir = destination_dir + '/images'
+        train_labels_dir = destination_dir + '/labels'
+
+        train_images = find_jpg_files_without_extension(train_images_dir)
+        class_image_count = defaultdict(int)
+        class_bbox_count = defaultdict(int)
+
+        for image_name in train_images:
+            label_file = train_labels_dir + f'/{image_name}.txt'
+            
+            classes_in_image = set()
+            
+            try:
+                with open(label_file, 'r') as file:
+                    for line in file:
+                        parts = line.strip().split()
+                        class_id = int(parts[0])
+                        class_name = class_names[class_id]
+                        
+                        class_bbox_count[class_name] += 1
+
+                        if class_name not in classes_in_image:
+                            class_image_count[class_name] += 1
+                            classes_in_image.add(class_name)
+                            
+            except Exception as e:
+                print(f'Ошибка при обработке файла {image_name}: {e}')
+                continue
+    
+        return {'filename': CURRENT_DIR, 
+                'image_count': dict(class_image_count), 
+                'bbox_count': dict(class_bbox_count)}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
