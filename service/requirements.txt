@@ -1,0 +1,6 @@
+fastapi==0.115.6
+httpx==0.28.1
+uvicorn==0.34.0
+scikit-learn==1.6.0
+torch==2.2.2
+torchvision==0.17.2
