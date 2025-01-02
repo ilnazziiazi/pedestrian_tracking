@@ -18,6 +18,7 @@ from http import HTTPStatus
 from pathlib import Path
 from uuid import uuid4
 from collections import defaultdict
+from src_eda import *
 
 
 app = FastAPI(
@@ -29,6 +30,11 @@ app = FastAPI(
 models: Dict[str, Any] = {}
 loaded_models: Dict[str, bool] = {}
 uploaded_data_paths: Dict[str, Path] = {}
+all_images: List = []
+images_with_person: List = []
+eda_data: Dict[str, Any] = {}
+class_image_count = defaultdict(int)
+class_bbox_count = defaultdict(int)
 
 
 # Базовая директория
@@ -59,6 +65,7 @@ class FitResponse(BaseModel):
     duration: float = None
     model_id: str = None
 
+
 # Set
 class SetRequest(BaseModel):
     id: str
@@ -78,6 +85,15 @@ class ModelListItem(BaseModel):
 class ModelListResponse(RootModel[List[ModelListItem]]):
     pass
 
+
+# EDA
+class EDARequest(BaseModel):
+    pass
+
+class EDAResponse(BaseModel):
+    status: str
+    message: str
+    data_to_plot: dict
 
 
 # Функции
@@ -157,6 +173,11 @@ def processing_and_train(data_paths: Dict[str, Path], hyperparams: SVMHyper, que
             "message": f"Ошибка во время обработки и обучения: {str(e)}"
         })
 
+
+def get_image_names(images_dir):
+    return [file.stem for file in images_dir.glob('*.jpg')]
+
+
 # Эндпоинты
 @app.post("/upload", response_model=UploadResponse)
 async def upload_data(archive: UploadFile) -> UploadResponse:
@@ -174,7 +195,43 @@ async def upload_data(archive: UploadFile) -> UploadResponse:
             "labels_path": labels_path
         })
 
+        all_images.append(get_image_names(images_path))
+        class_names = load_classes(data_yaml_path)
+        person_class_id = class_names.index('person')
+
+        for image_name in all_images:
+            label_file = (labels_path if image_name in all_images else None) / f'{image_name}.txt'
+            
+            if label_file.exists():
+                with open(label_file, 'r') as file:
+                    for line in file:
+                        parts = line.strip().split()
+                        if int(parts[0]) == person_class_id:
+                            images_with_person.append(image_name)
+                            break
+
+            classes_in_image = set()
+            try:
+                with open(label_file, 'r') as file:
+                    for line in file:
+                        parts = line.strip().split()
+                        class_id = int(parts[0])
+                        class_name = class_names[class_id]
+                        
+                        class_bbox_count[class_name] += 1
+
+                        if class_name not in classes_in_image:
+                            class_image_count[class_name] += 1
+                            classes_in_image.add(class_name)
+                            
+            except Exception as e:
+                print(f'Ошибка при обработке файла {image_name}: {e}')
+                continue
+
         num_images = len(list(images_path.glob("*.jpg")))
+
+        eda_data["class_image_count"] = class_image_count
+        eda_data["class_bbox_count"] = class_bbox_count
 
         return UploadResponse(
             status="success",
@@ -280,61 +337,109 @@ async def set_models(request: SetRequest) -> SetResponse:
 
 
 
-@app.post("/eda")
-async def eda(file: UploadFile = File(...)) -> Dict:
-    """
-    Exploratory Data Analysis (EDA) на основе загруженного архива изображений.
-    """
+# @app.post("/eda")
+# async def eda(file: UploadFile = File(...)) -> Dict:
+#     """
+#     Exploratory Data Analysis (EDA) на основе загруженного архива изображений.
+#     """
+#     try:
+#         # 1. Сохраняем zip-файл и распаковываем
+#         zip_path = os.path.join(CURRENT_DIR, file.filename)
+#         with open(zip_path, "wb") as buffer:
+#             buffer.write(await file.read())
+
+#         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+#             zip_ref.extractall(CURRENT_DIR)
+
+#         destination_dir = CURRENT_DIR + '/data'
+#         #destination_dir.mkdir(exist_ok=True)
+
+#         data_yaml_path = destination_dir + '/data.yaml'
+#         class_names = load_classes(data_yaml_path)
+
+#         train_images_dir = destination_dir + '/images'
+#         train_labels_dir = destination_dir + '/labels'
+
+#         train_images = find_jpg_files_without_extension(train_images_dir)
+#         class_image_count = defaultdict(int)
+#         class_bbox_count = defaultdict(int)
+
+#         for image_name in train_images:
+#             label_file = train_labels_dir + f'/{image_name}.txt'
+            
+#             classes_in_image = set()
+            
+#             try:
+#                 with open(label_file, 'r') as file:
+#                     for line in file:
+#                         parts = line.strip().split()
+#                         class_id = int(parts[0])
+#                         class_name = class_names[class_id]
+                        
+#                         class_bbox_count[class_name] += 1
+
+#                         if class_name not in classes_in_image:
+#                             class_image_count[class_name] += 1
+#                             classes_in_image.add(class_name)
+                            
+#             except Exception as e:
+#                 print(f'Ошибка при обработке файла {image_name}: {e}')
+#                 continue
+    
+#         return {'filename': CURRENT_DIR, 
+#                 'image_count': dict(class_image_count), 
+#                 'bbox_count': dict(class_bbox_count)}
+        
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.post("/eda", response_model=EDAResponse)
+async def eda(request: EDARequest) -> EDAResponse:
     try:
-        # 1. Сохраняем zip-файл и распаковываем
-        zip_path = os.path.join(CURRENT_DIR, file.filename)
-        with open(zip_path, "wb") as buffer:
-            buffer.write(await file.read())
+        data_yaml_path = uploaded_data_paths["data_yaml_path"]
+        images_path = uploaded_data_paths["images_path"]
+        labels_path = uploaded_data_paths["labels_path"]
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(CURRENT_DIR)
+        image_files = get_files(images_path, "jpg")
+        label_files = get_files(labels_path, "txt")
 
-        destination_dir = CURRENT_DIR + '/data'
-        #destination_dir.mkdir(exist_ok=True)
-
-        data_yaml_path = destination_dir + '/data.yaml'
         class_names = load_classes(data_yaml_path)
 
-        train_images_dir = destination_dir + '/images'
-        train_labels_dir = destination_dir + '/labels'
+        all_img_size_stats, all_width_list, all_height_list, all_proportions_list = get_image_size(all_images)
+        person_img_size_stats, person_width_list, person_height_list, person_proportions_list = get_image_size(all_images, images_with_person)
+        all_img_count = all_img_size_stats.get('image_count')
+        person_img_count = person_img_size_stats.get('image_count')
 
-        train_images = find_jpg_files_without_extension(train_images_dir)
-        class_image_count = defaultdict(int)
-        class_bbox_count = defaultdict(int)
+        # 1
+        eda_data["get_people_presence"] = f"Люди присутствуют на {round(person_img_count/all_img_count,2)*100}% изображений"
 
-        for image_name in train_images:
-            label_file = train_labels_dir + f'/{image_name}.txt'
-            
-            classes_in_image = set()
-            
-            try:
-                with open(label_file, 'r') as file:
-                    for line in file:
-                        parts = line.strip().split()
-                        class_id = int(parts[0])
-                        class_name = class_names[class_id]
-                        
-                        class_bbox_count[class_name] += 1
+        # 2
+        images_wo_person = [img for img in all_images if img not in (images_with_person or [])]
+        no_person_img_size_stats, no_person_width_list, no_person_height_list, no_person_proportions_list \
+            = get_image_size(all_images, images_wo_person)
+        eda_data["distrib_img_width_groups"] = (person_width_list, no_person_width_list)
 
-                        if class_name not in classes_in_image:
-                            class_image_count[class_name] += 1
-                            classes_in_image.add(class_name)
-                            
-            except Exception as e:
-                print(f'Ошибка при обработке файла {image_name}: {e}')
-                continue
-    
-        return {'filename': CURRENT_DIR, 
-                'image_count': dict(class_image_count), 
-                'bbox_count': dict(class_bbox_count)}
-        
+        # 3
+        eda_data["distrib_img_heights_groups"] = (person_height_list, no_person_height_list)
+
+        # 4
+        eda_data["distrib_img_ratios_groups"] = (person_proportions_list, no_person_proportions_list)
+
+        # 5
+        # Check upload data
+
+        # 6
+        eda["hitmap_all"] = get_bboxes_heatmap(all_images)
+        eda["hitmap_person"] = get_bboxes_heatmap(images_with_person)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return EDAResponse(
+            status="Error",
+            message=f"Ошибка: {str(e)}"
+        )
+
+
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
