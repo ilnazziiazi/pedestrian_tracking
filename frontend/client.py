@@ -1,58 +1,127 @@
 import streamlit as st
-import asyncio
-import httpx
 import matplotlib.pyplot as plt
-
-async def eda(file):
-    """Получение EDA."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(f"{BASE_URL}/eda", files={"file": (file.name, file.getvalue(), file.type)})
-        return response.json()
+import requests
+import pandas as pd
 
 BASE_URL = "http://127.0.0.1:8000"
 
-# Заголовок
-st.title("Проект по трекингу пешеходов")
+# Сайдбар для выбора действия
+st.sidebar.title("Проект по детекции и трекингу пешеходов")
+action = st.sidebar.selectbox(
+    "Выберите действие",
+    ["Загрузка данных и EDA", "Обучение модели", "Выбор модели и предсказание"]
+)
 
-st.sidebar.title("Станицы")
-page = st.sidebar.radio(" ", ["Демонстрация EDA", "Предсказание"])
-
-if page == "Демонстрация EDA":
-    st.header("Разведочный анализ данных")
-    # Загрузка файла
-    file = st.file_uploader("Выберите файл", type=["zip"])
-    container = st.empty()
-    if file is not None:
-        try:
-            st.title("Демонстрация EDA")
-            results = asyncio.run(eda(file)) 
-            
-            classes = list(results['image_count'].keys())
-            counts = list(results['image_count'].values())
-
-            fig, ax = plt.subplots()
-            fig.set_figheight(7)
-            fig.set_figwidth(7)
-            plt.bar(classes, counts, color='blue', edgecolor='white')
-            plt.xlabel('Class')
-            plt.ylabel(f'Image Count')
-            plt.title(f'Distribution of Image Count per Class')
-            plt.xticks(rotation=45, ha='right')
+# Загрузка данных
+if action == "Загрузка данных и EDA":
+    st.header("Загрузка данных и EDA")
+    uploaded_file = st.file_uploader("Выберите ZIP архив с данными", type="zip")
     
-            plt.tight_layout()
-            plt.grid(axis='y', color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
-            st.pyplot(fig)
-            #st.write('По графику видно. Что ...')
+    if uploaded_file is not None:
+        if st.button("Загрузить"):
+            files = {"archive": uploaded_file}
+            with st.spinner("Загрузка данных..."):
+                response = requests.post(f"{BASE_URL}/upload", files=files)
+                result = response.json()
+                
+                if result["status"] == "success":
+                    st.success(f"Данные успешно загружены! {result['message']}")
+                    st.write(f"Количество изображений: {result['data']['num_images']}")
+                else:
+                    st.error(f"Ошибка при загрузке: {result['message']}")
 
-        except Exception as e:
-            container.error(f"Ошибка: {str(e)}")
+        if st.button("Получить EDA"):
+            files = {"file": uploaded_file}
+            with st.spinner("Анализ данных..."):
+                response = requests.post(f"{BASE_URL}/eda", files=files)
+                result = response.json()
+                
+                st.subheader("Результаты EDA")
+                
+                # Визуализация количества изображений по классам
+                fig, ax = plt.subplots(figsize=(10, 6))
+                classes = list(result['image_count'].keys())
+                counts = list(result['image_count'].values())
+                ax.bar(classes, counts)
+                plt.xticks(rotation=45, ha='right')
+                plt.title("Количество изображений по классам")
+                st.pyplot(fig)
+                
+                # Визуализация количества bbox по классам
+                fig, ax = plt.subplots(figsize=(10, 6))
+                classes = list(result['bbox_count'].keys())
+                counts = list(result['bbox_count'].values())
+                ax.bar(classes, counts)
+                plt.xticks(rotation=45, ha='right')
+                plt.title("Количество bbox по классам")
+                st.pyplot(fig)
 
 
-elif page == "Предсказание":
-    st.header("Предсказание")
-    st.write("Загрузка файла")
+# Обучение модели
+elif action == "Обучение модели":
+    st.header("Обучение модели")
+    
+    # Параметры SVM
+    st.subheader("Параметры модели")
+    C = st.slider("C", 0.1, 10.0, 1.0, 0.1)
+    kernel = st.selectbox("Kernel", ["linear", "poly", "rbf", "sigmoid"])
+    max_iter = st.number_input("Max iterations", 100, 10000, 1000, 100)
+    timeout = st.number_input("Timeout (seconds)", 5, 300, 10, 5)
+    
+    if st.button("Обучить модель"):
+        params = {
+            "hyperparams": {
+                "C": C,
+                "kernel": kernel,
+                "max_iter": max_iter
+            },
+            "timeout": timeout
+        }
+        
+        with st.spinner("Обучение модели..."):
+            response = requests.post(f"{BASE_URL}/fit", json=params)
+            result = response.json()
+            
+            if result["status"] == "success":
+                st.success(f"Модель успешно обучена! ID модели: {result['model_id']}")
+                st.write(f"Время обучения: {result['duration']:.2f} секунд")
+            else:
+                st.error(f"Ошибка при обучении: {result['message']}")
 
-    # Загрузка файла
-    file = st.file_uploader("Выбери файл", type=["jpg", "png", "jpeg"])
-    if file is not None:
-        st.image(file, caption="Загруженное изображение", use_container_width=True)
+
+# Выбор модели и предсказание
+elif action == "Выбор модели и предсказание":
+    st.header("Выбор активной модели")
+    
+    if st.button("Получить список моделей"):
+        response = requests.get(f"{BASE_URL}/list_models")
+        models = response.json()
+        
+        if models:
+            table_data = []
+            for model in models:
+                model_row = {
+                    "model_id": model['id'],
+                    "c_parameter": model['data']['hyperparams'].get('C', ''),
+                    "kernel": model['data']['hyperparams'].get('kernel', ''),
+                    "max_iter": model['data']['hyperparams'].get('max_iter', '')
+                }
+                table_data.append(model_row)
+            
+            df = pd.DataFrame(table_data)
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("Нет доступных моделей")
+    
+    model_id = st.text_input("Введите ID модели")
+    
+    if st.button("Активировать модель"):
+        if model_id:
+            response = requests.post(
+                f"{BASE_URL}/set_models",
+                json={"id": model_id}
+            )
+            result = response.json()
+            st.success(result["message"])
+        else:
+            st.warning("Введите ID модели")
