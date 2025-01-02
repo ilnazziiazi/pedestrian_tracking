@@ -16,7 +16,8 @@ async def save_and_unpack(archive: UploadFile, output_dir: str) -> Tuple[Path, P
         f.write(archive.file.read())
 
     if not zipfile.is_zipfile(archive_path):
-        raise HTTPException(status_code=400, detail="Файл должен быть zip-архивом")
+        raise HTTPException(status_code=400,
+                            detail="Файл должен быть zip-архивом")
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, zipfile.ZipFile(archive_path, 'r').extractall, temp_dir)
@@ -36,15 +37,27 @@ async def save_and_unpack(archive: UploadFile, output_dir: str) -> Tuple[Path, P
                 break
 
     if not data_yaml_path:
-        raise HTTPException(status_code=400, detail="YAML-файл с классами не найден в архиве")
+        raise HTTPException(
+            status_code=400,
+            detail="YAML-файл с классами не найден в архиве."
+        )
     if not images_path or not labels_path:
-        raise HTTPException(status_code=400, detail="Папки images и labels не найдены в архиве")
+        raise HTTPException(
+            status_code=400,
+            detail="Папки images и labels не найдены в архиве."
+        )
 
     # Проверяем расширения
     if not any(images_path.glob("*.jpg")):
-        raise HTTPException(status_code=400, detail="Папка images не содержит файлов с расширением .jpg")
+        raise HTTPException(
+            status_code=400,
+            detail="Папка images не содержит файлов с расширением .jpg."
+        )
     if not any(labels_path.glob("*.txt")):
-        raise HTTPException(status_code=400, detail="Папка labels не содержит файлов с расширением .txt")
+        raise HTTPException(
+            status_code=400,
+            detail="Папка labels не содержит файлов с расширением .txt."
+        )
 
     return data_yaml_path, images_path, labels_path
 
@@ -70,8 +83,7 @@ async def load_bounding_boxes(image_name: str, labels_dir: Path) -> List[Tuple[i
     label_file = labels_dir / f"{image_name}.txt"
 
     if not label_file.exists():
-        print(f"Файл отсутствует: {label_file}")
-        return []
+        raise FileNotFoundError(f"Файл отсутствует: {label_file}.")
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, read_boxes, label_file)
