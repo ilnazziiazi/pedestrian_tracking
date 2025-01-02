@@ -408,8 +408,8 @@ async def eda(request: EDARequest) -> EDAResponse:
         # Check upload data
 
         # 6
-        eda["hitmap_all"] = get_bboxes_heatmap(all_images)
-        eda["hitmap_person"] = get_bboxes_heatmap(images_with_person)
+        eda_data["hitmap_all"] = get_bboxes_heatmap(all_images)
+        eda_data["hitmap_person"] = get_bboxes_heatmap(images_with_person)
 
     except Exception as e:
         return EDAResponse(
