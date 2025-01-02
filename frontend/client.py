@@ -1,9 +1,17 @@
+import sys
 import streamlit as st
 import matplotlib.pyplot as plt
 import requests
 import pandas as pd
 
+sys.path.append('../')
+from utils.utils import get_logger
+logger = get_logger("streamlit_client")
+
+logger.info("Запуск приложения")
+
 BASE_URL = "http://127.0.0.1:8000"
+
 
 # Сайдбар для выбора действия
 st.sidebar.title("Проект по детекции и трекингу пешеходов")
@@ -11,6 +19,7 @@ action = st.sidebar.selectbox(
     "Выберите действие",
     ["Загрузка данных и EDA", "Обучение модели", "Выбор модели и предсказание"]
 )
+logger.info(f"Выбрано действие: {action}")
 
 # Загрузка данных
 if action == "Загрузка данных и EDA":
@@ -18,43 +27,56 @@ if action == "Загрузка данных и EDA":
     uploaded_file = st.file_uploader("Выберите ZIP архив с данными", type="zip")
     
     if uploaded_file is not None:
+        logger.info(f"Загружен файл: {uploaded_file.name}")
+        
         if st.button("Загрузить"):
             files = {"archive": uploaded_file}
             with st.spinner("Загрузка данных..."):
-                response = requests.post(f"{BASE_URL}/upload", files=files)
-                result = response.json()
-                
-                if result["status"] == "success":
-                    st.success(f"Данные успешно загружены! {result['message']}")
-                    st.write(f"Количество изображений: {result['data']['num_images']}")
-                else:
-                    st.error(f"Ошибка при загрузке: {result['message']}")
+                try:
+                    response = requests.post(f"{BASE_URL}/upload_data", files=files)
+                    result = response.json()
+                    
+                    if result["status"] == "success":
+                        logger.info("Данные успешно загружены")
+                        st.success(f"Данные успешно загружены! {result['message']}")
+                        st.write(f"Количество изображений: {result['data']['num_images']}")
+                    else:
+                        logger.error(f"Ошибка при загрузке: {result['message']}")
+                        st.error(f"Ошибка при загрузке: {result['message']}")
+                except Exception as e:
+                    logger.error(f"Ошибка при отправке запроса: {str(e)}")
+                    st.error(f"Ошибка при отправке запроса: {str(e)}")
 
         if st.button("Получить EDA"):
             files = {"file": uploaded_file}
             with st.spinner("Анализ данных..."):
-                response = requests.post(f"{BASE_URL}/eda", files=files)
-                result = response.json()
-                
-                st.subheader("Результаты EDA")
-                
-                # Визуализация количества изображений по классам
-                fig, ax = plt.subplots(figsize=(10, 6))
-                classes = list(result['image_count'].keys())
-                counts = list(result['image_count'].values())
-                ax.bar(classes, counts)
-                plt.xticks(rotation=45, ha='right')
-                plt.title("Количество изображений по классам")
-                st.pyplot(fig)
-                
-                # Визуализация количества bbox по классам
-                fig, ax = plt.subplots(figsize=(10, 6))
-                classes = list(result['bbox_count'].keys())
-                counts = list(result['bbox_count'].values())
-                ax.bar(classes, counts)
-                plt.xticks(rotation=45, ha='right')
-                plt.title("Количество bbox по классам")
-                st.pyplot(fig)
+                try:
+                    response = requests.post(f"{BASE_URL}/eda", files=files)
+                    result = response.json()
+                    logger.info("Получены результаты EDA")
+                    
+                    st.subheader("Результаты EDA")
+                    
+                    # Визуализация количества изображений по классам
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    classes = list(result['image_count'].keys())
+                    counts = list(result['image_count'].values())
+                    ax.bar(classes, counts)
+                    plt.xticks(rotation=45, ha='right')
+                    plt.title("Количество изображений по классам")
+                    st.pyplot(fig)
+                    
+                    # Визуализация количества bbox по классам
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    classes = list(result['bbox_count'].keys())
+                    counts = list(result['bbox_count'].values())
+                    ax.bar(classes, counts)
+                    plt.xticks(rotation=45, ha='right')
+                    plt.title("Количество bbox по классам")
+                    st.pyplot(fig)
+                except Exception as e:
+                    logger.error(f"Ошибка при получении EDA: {str(e)}")
+                    st.error(f"Ошибка при получении EDA: {str(e)}")
 
 
 # Обучение модели
@@ -118,7 +140,7 @@ elif action == "Выбор модели и предсказание":
     if st.button("Активировать модель"):
         if model_id:
             response = requests.post(
-                f"{BASE_URL}/set_models",
+                f"{BASE_URL}/set_model",
                 json={"id": model_id}
             )
             result = response.json()
