@@ -1,0 +1,26 @@
+services:
+  service:
+    build: service
+    ports:
+      - 8000:8000
+    volumes:
+      - ./service:/app
+    restart: always
+    networks:
+      - app
+    container_name: server_app
+
+  frontend:
+    build: frontend
+    ports:
+      - 8501:8501
+    volumes:
+      - ./frontend:/app
+    restart: always
+    networks:
+      - app
+    container_name: client_app
+
+networks:
+  app:
+    driver: bridge
