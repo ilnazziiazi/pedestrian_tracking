@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 
 sys.path.append('../')
 from utils.utils import get_logger
-logger = get_logger("streamlit_client")
+logger = get_logger("service_fastapi")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
