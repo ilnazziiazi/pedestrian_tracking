@@ -14,3 +14,5 @@ threadpoolctl==3.5.0
 torch==2.2.2
 torchvision==0.17.2
 uvicorn==0.34.0
+pyyaml==6.0.2
+python-multipart==0.0.20
