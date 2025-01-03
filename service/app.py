@@ -3,6 +3,7 @@ import time
 import cv2
 import json
 import joblib
+import sys
 import numpy as np
 from multiprocessing import Process, Queue
 from pydantic import BaseModel, RootModel, Field
@@ -14,6 +15,9 @@ from pathlib import Path
 from src_eda import get_image_size, get_bboxes_heatmap
 from contextlib import asynccontextmanager
 
+sys.path.append('../')
+from utils.utils import get_logger
+logger = get_logger("streamlit_client")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -164,6 +168,7 @@ async def upload_data(archive: UploadFile):
     Загрузка данных из интерфейса
     """
     try:
+        logger.info("Загрузка данных из интерфейса")
         output_dir = Path("./uploaded_data")
         if output_dir.exists() and output_dir.is_dir():
             shutil.rmtree(output_dir)
@@ -178,6 +183,7 @@ async def upload_data(archive: UploadFile):
         })
 
         num_images = len(list(images_path.glob("*.jpg")))
+        logger.info("Данные загружены")
 
         return UploadResponse(
             status="success",
@@ -210,6 +216,7 @@ async def fit(request: FitRequest):
                 detail="Сначала загрузите данные."
             )
 
+        logger.info("Начали обучение модели")
         start = time.time()
 
         queue = Queue()
@@ -252,6 +259,7 @@ async def fit(request: FitRequest):
 
         end = time.time()
         total_duration = end - start
+        logger.info(f"Модель успешно обучена.")
 
         return FitResponse(
             **result,
@@ -263,6 +271,7 @@ async def fit(request: FitRequest):
         raise e
 
     except Exception as e:
+        logger.error(f"Ошибка при обучении модели: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Произошла ошибка: {str(e)}."
@@ -274,11 +283,13 @@ async def list_models():
     """
     Вывод всех доступых моделей в интерфейс
     """
+    logger.info(f"Получение моделей...")
     model_list = [ModelListItem(id=model_id,
                                 data=ModelData(path=str(models[model_id]["path"]),
                                                hyperparams=models[model_id]["hyperparams"])
                                 ) for model_id in models.keys()
                   ]
+    logger.info("Список моделей получен.")
     return ModelListResponse(root=model_list)
 
 
@@ -309,6 +320,7 @@ async def predict(image_file: UploadFile):
     Осуществляется на загруженной в set_model модели
     """
     try:
+        logger.info(f"Начали предсказывать")
         image_bytes = np.asarray(bytearray(image_file.file.read()), dtype=np.uint8)
         image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
         if image is None:
@@ -336,11 +348,13 @@ async def predict(image_file: UploadFile):
         df_person["patch"] = df_person["patch"].apply(lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
         response_json = df_person[["index", "bbox", "probability"]].to_dict(orient="records")
 
+        logger.info(f"Предсказание успешно произведено")
         return PredictResponse(
             model_id=loaded_model,
             data=response_json
         )
     except Exception as e:
+        logger.info(f"Ошибка при предсказании: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Произошла ошибка: {str(e)}."
@@ -353,9 +367,11 @@ async def eda():
     Ответ с параметрами визуализации EDA для загруженных данных
     """
     try:
+        logger.info("Начали выполнение EDA")
         if not uploaded_data_paths.get("data_yaml_path") or \
                     not uploaded_data_paths.get("images_path") or \
                     not uploaded_data_paths.get("labels_path"):
+            logger.info("EDA не выполнено, из-за отсутствия данных")
             raise HTTPException(
                 status_code=400,
                 detail="Сначала загрузите данные для анализа."
@@ -397,6 +413,7 @@ async def eda():
         hitmap_all = await get_bboxes_heatmap(all_images, images_path, labels_path, class_names)
         hitmap_person = await get_bboxes_heatmap(images_with_person, images_path, labels_path, class_names)
 
+        logger.info("EDA завершено успешно")
         return EDAResponse(
             people_presence=people_presence,
             dist_img_width_groups=dist_img_width_groups,
@@ -411,6 +428,7 @@ async def eda():
         raise e
 
     except Exception as e:
+        logger.error(f"Ошибка при выполнении EDA: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Произошла ошибка: {str(e)}."
@@ -462,6 +480,7 @@ async def models_info(request: ModelsInfoRequest):
 
             models_info_json.append(ModelsInfoResponseItem(id=data["model_id"], metrics=metrics))
 
+    logger.info("Метрики качества модели получены.")
     return ModelsInfoResponse(models_info_json)
 
 
@@ -470,6 +489,7 @@ async def remove_all():
     """
     Удаление из памяти и с диска всех моделей и их файлов, кроме дефолтных
     """
+    logger.info("Удаление моделей и данных...")
     removed_models = []
 
     for model_id in list(models.keys()):
@@ -503,4 +523,5 @@ async def remove_all():
             if model_id in loaded_models:
                 del loaded_models[model_id]
 
+    logger.info("Все модели, данные и временные файлы удалены.")
     return RemoveResponse(root=removed_models)
