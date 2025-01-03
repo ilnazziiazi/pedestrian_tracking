@@ -3,6 +3,9 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import requests
 import pandas as pd
+from PIL import Image
+import cv2
+import numpy as np
 
 sys.path.append('../')
 from utils.utils import get_logger
@@ -17,7 +20,7 @@ BASE_URL = "http://127.0.0.1:8000"
 st.sidebar.title("Проект по детекции и трекингу пешеходов")
 action = st.sidebar.selectbox(
     "Выберите действие",
-    ["Загрузка данных и EDA", "Обучение модели", "Выбор модели и предсказание"]
+    ["Загрузка данных и EDA", "Обучение модели", "Информация о модели", "Инференс модели"]
 )
 logger.info(f"Выбрано действие: {action}")
 
@@ -111,39 +114,116 @@ elif action == "Обучение модели":
                 st.error(f"Ошибка при обучении: {result['message']}")
 
 
-# Выбор модели и предсказание
-elif action == "Выбор модели и предсказание":
-    st.header("Выбор активной модели")
+# Инференс модели
+elif action == "Инференс модели":
+    st.header("Инференс модели")
     
-    if st.button("Получить список моделей"):
-        response = requests.get(f"{BASE_URL}/list_models")
-        models = response.json()
+    response = requests.get(f"{BASE_URL}/list_models")
+    models = response.json()
+    
+    if models:
+        table_data = []
+        model_options = []  # Список для selectbox
         
-        if models:
-            table_data = []
-            for model in models:
-                model_row = {
-                    "model_id": model['id'],
-                    "c_parameter": model['data']['hyperparams'].get('C', ''),
-                    "kernel": model['data']['hyperparams'].get('kernel', ''),
-                    "max_iter": model['data']['hyperparams'].get('max_iter', '')
-                }
-                table_data.append(model_row)
-            
-            df = pd.DataFrame(table_data)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("Нет доступных моделей")
-    
-    model_id = st.text_input("Введите ID модели")
-    
-    if st.button("Активировать модель"):
-        if model_id:
-            response = requests.post(
-                f"{BASE_URL}/set_model",
-                json={"id": model_id}
+        for model in models:
+            model_row = {
+                "ID модели": model['id'],
+                "C параметр": model['data']['hyperparams'].get('C', ''),
+                "Ядро": model['data']['hyperparams'].get('kernel', ''),
+                "Макс. итераций": model['data']['hyperparams'].get('max_iter', '')
+            }
+            table_data.append(model_row)
+            model_options.append(model['id'])
+        
+        # Показываем таблицу моделей
+        df = pd.DataFrame(table_data)
+        st.subheader("Список доступных моделей")
+        st.dataframe(df, use_container_width=True)
+        
+        # Создаем колонки для разделения интерфейса
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Выбор модели через selectbox
+            selected_model = st.selectbox(
+                "Выберите модель для активации",
+                options=model_options
             )
-            result = response.json()
-            st.success(result["message"])
+            
+            # Кнопка активации выбранной модели
+            if st.button("Активировать выбранную модель"):
+                response = requests.post(
+                    f"{BASE_URL}/set_model",
+                    json={"id": selected_model}
+                )
+                result = response.json()
+                st.session_state['model_activated'] = True
+                st.session_state['active_model'] = selected_model
+        
+        with col2:
+            if 'model_activated' not in st.session_state:
+                st.session_state['model_activated'] = False
+            
+            if st.session_state['model_activated']:
+                st.success(f"Активная модель: {st.session_state['active_model']}")
+            else:
+                st.warning("Модель не активирована")
+        
+        # Добавляем секцию для загрузки изображения и получения предсказаний
+        st.subheader("Предсказание")
+        
+        if not st.session_state['model_activated']:
+            st.warning("Для получения предсказаний необходимо активировать модель")
         else:
-            st.warning("Введите ID модели")
+            uploaded_image = st.file_uploader("Загрузите изображение для предсказания", type=["jpg", "jpeg", "png"])
+            
+            if uploaded_image is not None:
+                image = Image.open(uploaded_image)
+                
+                if st.button("Получить предсказание"):
+                    uploaded_image.seek(0)
+                    
+                    try:
+                        files = {"image_file": uploaded_image}
+                        response = requests.post(f"{BASE_URL}/predict", files=files)
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            
+                            if result['data']:
+                                # Конвертируем PIL Image в массив numpy
+                                uploaded_image.seek(0)
+                                image_bytes = np.asarray(bytearray(uploaded_image.read()), dtype=np.uint8)
+                                image_cv = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+                                
+                                # Рисуем bbox для каждого обнаруженного пешехода
+                                for pred in result['data']:
+                                    bbox = pred['bbox']
+                                    prob = pred['probability']
+                                    
+                                    # Получаем координаты bbox
+                                    x1, y1, x2, y2 = map(int, bbox)
+                                    
+                                    # Рисуем прямоугольник
+                                    cv2.rectangle(image_cv, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                    
+                                    # Добавляем текст с вероятностью
+                                    text = f"{prob:.2%}"
+                                    cv2.putText(image_cv, text, (x1, y1-10), 
+                                              cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                                
+                                # Конвертируем BGR в RGB для корректного отображения
+                                image_rgb = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
+                                
+                                # Показываем изображение с bbox
+                                st.image(image_rgb, caption="Результат детекции", use_container_width=True)
+                                st.success(f"Обнаружено пешеходов: {len(result['data'])}")
+                            else:
+                                st.info("Пешеходы на изображении не обнаружены")
+                        else:
+                            st.error(f"Ошибка при получении предсказания: {response.text}")
+                            
+                    except Exception as e:
+                        st.error(f"Ошибка при обработке запроса: {str(e)}")
+    else:
+        st.info("Нет доступных моделей. Сначала обучите модель.")
