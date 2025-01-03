@@ -6,7 +6,7 @@ import cv2
 import random
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from torchvision import models, transforms
+from torchvision import transforms
 from torchvision.models import resnet50, ResNet50_Weights
 import numpy as np
 from sklearn.utils import shuffle
@@ -17,7 +17,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 import asyncio
 from fastapi import HTTPException
-from data_loader import load_bounding_boxes, load_classes
+from data_loader import load_bounding_boxes, load_classes, get_files
 import pandas as pd
 
 # Предобученная Resnet для векторизации
@@ -30,6 +30,7 @@ transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
+
 
 #############################################
 # Предобрабработка изображений для обучения #
@@ -59,8 +60,10 @@ async def get_average_bbox_size(images, labels_dir, class_names, class_name='per
     avg_height = total_height / count
     return avg_width, avg_height
 
+
 # Извлечение бибоксов
-async def process_image(image_name, images_dir, labels_dir, class_names, avg_width, avg_height, class_name='person', is_background=False, max_patches_per_image=3):
+async def process_image(image_name, images_dir, labels_dir, class_names, avg_width,
+                        avg_height, class_name='person', is_background=False, max_patches_per_image=3):
     person_class_id = class_names.index(class_name)
     image_path = images_dir / f"{image_name}.jpg"
     image = await asyncio.get_event_loop().run_in_executor(None, cv2.imread, str(image_path))
@@ -80,6 +83,7 @@ async def process_image(image_name, images_dir, labels_dir, class_names, avg_wid
     else:
         return extract_background_patches(selected_bboxes, image, avg_width, avg_height, w, h, max_patches_per_image)
 
+
 # Извлекаем патчи с целевым классом
 def extract_person_patches(selected_bboxes, image, avg_width, avg_height, w, h):
     x_min = ((selected_bboxes[:, 1] - avg_width / 2) * w).astype(int)
@@ -94,6 +98,7 @@ def extract_person_patches(selected_bboxes, image, avg_width, avg_height, w, h):
 
     patches = [image[y_min[i]:y_max[i], x_min[i]:x_max[i]] for i in range(len(selected_bboxes))]
     return patches
+
 
 # Извлекаем патчи с фоном
 def extract_background_patches(selected_bboxes, image, avg_width, avg_height, w, h, max_patches_per_image=3):
@@ -130,6 +135,7 @@ def extract_background_patches(selected_bboxes, image, avg_width, avg_height, w,
 
     return patches
 
+
 # Генератор загрузки
 def create_dataloader(patches, label=None, indices=None, batch_size=512):
     transformed_patches = np.array([transform(patch).numpy() for patch in patches])
@@ -148,6 +154,7 @@ def create_dataloader(patches, label=None, indices=None, batch_size=512):
 
     return dataloader
 
+
 # Извлечение признаков из Resnet
 def extract_resnet_features(dataloaders, resnet):
     resnet.eval()
@@ -164,6 +171,7 @@ def extract_resnet_features(dataloaders, resnet):
                 extracted_labels_or_indices.append(additional_data.cpu().numpy())
 
     return np.vstack(extracted_features), np.hstack(extracted_labels_or_indices)
+
 
 # Главная функция с пайплайном процессинга
 async def process_data(data_yaml_path, images_path, labels_path, image_files,
@@ -200,6 +208,7 @@ async def process_data(data_yaml_path, images_path, labels_path, image_files,
 
     return X, y
 
+
 #####################
 # Обучение и оценка #
 #####################
@@ -207,9 +216,6 @@ async def process_data(data_yaml_path, images_path, labels_path, image_files,
 def init_svm_model(hyperparams):
     return SVC(C=hyperparams.C, kernel=hyperparams.kernel, max_iter=hyperparams.max_iter, probability=True)
 
-# Получение сохраненных при распаковке файлов
-def get_files(path, extension):
-    return [file.stem for file in path.glob(f"*.{extension}")]
 
 # Сохранение модели на диск
 def save_model(model: SVC):
@@ -221,6 +227,7 @@ def save_model(model: SVC):
         pickle.dump(model, f)
 
     return model_id, str(model_path)
+
 
 # Оценка модели
 def evaluate_model(model_id, model, X_test, y_test):
@@ -269,6 +276,7 @@ def evaluate_model(model_id, model, X_test, y_test):
             detail=f"Произошла ошибка: {str(e)}."
         )
 
+
 # Вызов процессинга, обучения и оценки
 def processing_and_train(data_paths, hyperparams, queue):
     try:
@@ -308,11 +316,13 @@ def processing_and_train(data_paths, hyperparams, queue):
                 "model_path": model_path
             })
 
-        except Exception as e:(
-            queue.put({
-                "status": "error",
-                "message": f"Ошибка при передаче в очередь: {str(e)}"
-            }))
+        except Exception as e:
+            (
+                queue.put({
+                    "status": "error",
+                    "message": f"Ошибка при передаче в очередь: {str(e)}"
+                })
+            )
 
     # Отлавливаем HTTPException, переданные вызываемыми внутри функциями
     except HTTPException as e:
@@ -323,6 +333,7 @@ def processing_and_train(data_paths, hyperparams, queue):
             status_code=500,
             detail=f"Произошла ошибка: {str(e)}."
         )
+
 
 ###################################################
 # Обработка входного изображения для предсказания #
@@ -338,9 +349,11 @@ def cluster_image(image, n_clusters=5):
     clustered_image = kmeans.labels_.reshape(h, w)
     return clustered_image, kmeans
 
+
 # Блюр изображений
 def gaussian_blur(image, kernel_size=(15, 15), sigma=0):
     return cv2.GaussianBlur(image, kernel_size, sigma)
+
 
 # Выделение регионов интереса
 def get_kmeans_regions(image, clustered_image, min_size=380, max_size=3200,
@@ -379,6 +392,7 @@ def get_kmeans_regions(image, clustered_image, min_size=380, max_size=3200,
                 regions.append((region, (x, y, w, h)))
 
     return regions
+
 
 # Процессинг изображения для предсказания
 def process_inference_image(image, n_clusters=5, blur_kernel=(15, 15), blur_sigma=0,

@@ -1,37 +1,48 @@
-import multiprocessing
-import asyncio
-import uvicorn
 import shutil
-import pickle
 import time
-from multiprocessing import Process, Queue
-from pydantic import BaseModel, RootModel, Field
-from typing import Literal, Dict, Any, List
-from fastapi import UploadFile, FastAPI, HTTPException, File
-from data_loader import save_and_unpack, load_classes
-from ml_pipeline import get_files, processing_and_train, process_inference_image
 import cv2
-import numpy as np
-from pathlib import Path
-from collections import defaultdict
-from src_eda import *
 import json
 import joblib
-import pandas as pd
+import numpy as np
+from multiprocessing import Process, Queue
+from pydantic import BaseModel, RootModel, Field
+from typing import Literal, Dict, Any, List, Tuple
+from fastapi import UploadFile, FastAPI, HTTPException
+from data_loader import save_and_unpack, get_files, load_image_groups, load_classes
+from ml_pipeline import processing_and_train, process_inference_image
+from pathlib import Path
+from src_eda import get_image_size, get_bboxes_heatmap
+from contextlib import asynccontextmanager
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Загрузка уже обученных моделей при запуске сервиса
+    """
+    global models
+    models_path = Path("./models")
+    if models_path.exists() and models_path.is_dir():
+        for model_file in models_path.glob("default_*.pkl"):
+            model_id = model_file.stem
+            models[model_id] = {
+                "path": str(model_file),
+                "hyperparams": {}
+            }
+    yield
+    models.clear()
+
+# Инициализация после объявления lifespan
 app = FastAPI(
     docs_url="/api/openapi",
-    openapi_url="/api/openapi.json"
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan
 )
 
 models: Dict[str, Any] = {}
 loaded_models: Dict[str, bool] = {}
 uploaded_data_paths: Dict[str, Path] = {}
-all_images: List = []
-images_with_person: List = []
-eda_data: Dict[str, Any] = {}
-class_image_count = defaultdict(int)
-class_bbox_count = defaultdict(int)
+
 
 # Классы Request-Response
 # Гиперпараметры модели обучения
@@ -40,16 +51,19 @@ class SVMHyper(BaseModel):
     kernel: Literal["linear", "poly", "rbf", "sigmoid", "precomputed"] = "linear"
     max_iter: int = 1000
 
+
 # Upload архива
 class UploadResponse(BaseModel):
     status: str
     message: str
     data: dict
 
+
 # Fit
 class FitRequest(BaseModel):
     hyperparams: SVMHyper
     timeout: int = 10
+
 
 class FitResponse(BaseModel):
     status: str
@@ -57,32 +71,40 @@ class FitResponse(BaseModel):
     duration: float = None
     model_id: str = None
 
+
 # Set
 class SetRequest(BaseModel):
     id: str
 
+
 class SetResponse(BaseModel):
     message: str
+
 
 # Model List
 class ModelData(BaseModel):
     path: str
     hyperparams: dict
 
+
 class ModelListItem(BaseModel):
     id: str
     data: ModelData
 
+
 class ModelListResponse(RootModel[List[ModelListItem]]):
     pass
+
 
 # Model Info
 class ModelsInfoRequest(BaseModel):
     ids: List[str] = Field(default=list)
 
+
 class Curves(BaseModel):
     x: List[float] = Field(default=list)   # Ось X
     y: List[float] = Field(default=list)    # Ось Y
+
 
 class TrainEvaluationMetrics(BaseModel):
     accuracy: float
@@ -94,12 +116,25 @@ class TrainEvaluationMetrics(BaseModel):
     roc_curve: Curves
     pr_curve: Curves
 
+
 class ModelsInfoResponseItem(BaseModel):
     id: str
     metrics: TrainEvaluationMetrics
 
+
 class ModelsInfoResponse(RootModel[List[ModelsInfoResponseItem]]):
     pass
+
+
+# EDA
+class EDAResponse(BaseModel):
+    people_presence: float
+    dist_img_width_groups: Tuple[List[float], List[float]]
+    dist_img_heights_groups: Tuple[List[float], List[float]]
+    dist_img_ratios_groups: Tuple[List[float], List[float]]
+    hitmap_all: List[List[int]]
+    hitmap_person: List[List[int]]
+
 
 # Predict
 class PredictionItem(BaseModel):
@@ -107,23 +142,27 @@ class PredictionItem(BaseModel):
     bbox: Any
     probability: Any
 
+
 class PredictResponse(BaseModel):
     model_id: str
     data: List[PredictionItem]
 
-# EDA
-class EDARequest(BaseModel):
-    pass
 
-class EDAResponse(BaseModel):
-    status: str
+# Remove
+class RemoveResponseItem(BaseModel):
     message: str
-    data_to_plot: dict
+
+
+class RemoveResponse(RootModel[List[RemoveResponseItem]]):
+    pass
 
 
 # Эндпоинты
 @app.post("/upload_data", response_model=UploadResponse)
-async def upload_data(archive: UploadFile) -> UploadResponse:
+async def upload_data(archive: UploadFile):
+    """
+    Загрузка данных из интерфейса
+    """
     try:
         output_dir = Path("./uploaded_data")
         if output_dir.exists() and output_dir.is_dir():
@@ -138,43 +177,7 @@ async def upload_data(archive: UploadFile) -> UploadResponse:
             "labels_path": labels_path
         })
 
-        all_images.append(get_image_names(images_path))
-        class_names = load_classes(data_yaml_path)
-        person_class_id = class_names.index('person')
-
-        for image_name in all_images:
-            label_file = (labels_path if image_name in all_images else None) / f'{image_name}.txt'
-
-            if label_file.exists():
-                with open(label_file, 'r') as file:
-                    for line in file:
-                        parts = line.strip().split()
-                        if int(parts[0]) == person_class_id:
-                            images_with_person.append(image_name)
-                            break
-
-            classes_in_image = set()
-            try:
-                with open(label_file, 'r') as file:
-                    for line in file:
-                        parts = line.strip().split()
-                        class_id = int(parts[0])
-                        class_name = class_names[class_id]
-
-                        class_bbox_count[class_name] += 1
-
-                        if class_name not in classes_in_image:
-                            class_image_count[class_name] += 1
-                            classes_in_image.add(class_name)
-
-            except Exception as e:
-                print(f'Ошибка при обработке файла {image_name}: {e}')
-                continue
-
         num_images = len(list(images_path.glob("*.jpg")))
-
-        eda_data["class_image_count"] = class_image_count
-        eda_data["class_bbox_count"] = class_bbox_count
 
         return UploadResponse(
             status="success",
@@ -192,18 +195,13 @@ async def upload_data(archive: UploadFile) -> UploadResponse:
             detail=f"Произошла ошибка: {str(e)}."
         )
 
-    # Отлавливаем HTTPException, переданные вызываемыми внутри функциями
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Произошла ошибка: {str(e)}."
-        )
 
 @app.post("/fit", response_model=FitResponse)
-async def fit(request: FitRequest) -> FitResponse:
+async def fit(request: FitRequest):
+    """
+    Обучение SVM на загруженных данных.
+    Пользователь сам может выбрать гиперпараметы обучения.
+    """
     try:
         data_dir = Path("./uploaded_data")
         if not data_dir.exists() or not any(data_dir.iterdir()):
@@ -225,7 +223,8 @@ async def fit(request: FitRequest) -> FitResponse:
             process.join()
             raise HTTPException(
                 status_code=408,
-                detail=f"Превышен лимит обучения {request.timeout} секунд — процесс прерван. Попробуйте увеличить лимит."
+                detail=f"Превышен лимит обучения {request.timeout} секунд — процесс прерван."
+                       f" Попробуйте увеличить лимит."
             )
 
         if not queue.empty():
@@ -269,17 +268,25 @@ async def fit(request: FitRequest) -> FitResponse:
             detail=f"Произошла ошибка: {str(e)}."
         )
 
+
 @app.get("/list_models", response_model=ModelListResponse)
-async def list_models()-> ModelListResponse:
+async def list_models():
+    """
+    Вывод всех доступых моделей в интерфейс
+    """
     model_list = [ModelListItem(id=model_id,
                                 data=ModelData(path=str(models[model_id]["path"]),
                                                hyperparams=models[model_id]["hyperparams"])
-                                )  for model_id in models.keys()
+                                ) for model_id in models.keys()
                   ]
     return ModelListResponse(root=model_list)
 
+
 @app.post("/set_model", response_model=SetResponse)
-async def set_model(request: SetRequest) -> SetResponse:
+async def set_model(request: SetRequest):
+    """
+    Активация обученной модели для использование в предсказании
+    """
     model_id = request.id
     if model_id not in models.keys():
         raise HTTPException(
@@ -294,42 +301,127 @@ async def set_model(request: SetRequest) -> SetResponse:
     loaded_models[model_id] = True
     return SetResponse(message=f"Модель '{model_id}' загружена.")
 
+
 @app.post("/predict", response_model=PredictResponse)
-async def predict(image_file: UploadFile) -> PredictResponse:
-    image_bytes = np.asarray(bytearray(image_file.file.read()), dtype=np.uint8)
-    image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
-    if image is None:
+async def predict(image_file: UploadFile):
+    """
+    Предсказание людей на загруженном изображении.
+    Осуществляется на загруженной в set_model модели
+    """
+    try:
+        image_bytes = np.asarray(bytearray(image_file.file.read()), dtype=np.uint8)
+        image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Загруженный файл не является изображением."
+            )
+
+        df_processed = process_inference_image(image)
+        loaded_model = next((key for key, value in loaded_models.items() if value), None)
+
+        if loaded_model is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Активных моделей не найдено. Используйте метод set_model, чтобы активировать модель."
+            )
+
+        model_path = Path(f"./models/{loaded_model}.pkl")
+        svm = joblib.load(model_path)
+        probas = svm.predict_proba(np.vstack(df_processed["features"]))[:, 1]
+        df_processed["probability"] = probas
+
+        df_person = df_processed[df_processed["probability"] > 0.85].reset_index(drop=True)
+
+        df_person["patch"] = df_person["patch"].apply(lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
+        response_json = df_person[["index", "bbox", "probability"]].to_dict(orient="records")
+
+        return PredictResponse(
+            model_id=loaded_model,
+            data=response_json
+        )
+    except Exception as e:
         raise HTTPException(
-            status_code=400,
-            detail="Загруженный файл не является изображением."
+            status_code=500,
+            detail=f"Произошла ошибка: {str(e)}."
         )
 
-    df_processed = process_inference_image(image)
-    loaded_model = next((key for key, value in loaded_models.items() if value), None)
 
-    if loaded_model is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Активных моделей не найдено. Используйте метод set_model, чтобы активировать модель."
+@app.get("/eda", response_model=EDAResponse)
+async def eda():
+    """
+    Ответ с параметрами визуализации EDA для загруженных данных
+    """
+    try:
+        if not uploaded_data_paths.get("data_yaml_path") or \
+                    not uploaded_data_paths.get("images_path") or \
+                    not uploaded_data_paths.get("labels_path"):
+            raise HTTPException(
+                status_code=400,
+                detail="Сначала загрузите данные для анализа."
+            )
+
+        data_yaml_path = uploaded_data_paths["data_yaml_path"]
+        images_path = uploaded_data_paths["images_path"]
+        labels_path = uploaded_data_paths["labels_path"]
+        class_names = await load_classes(data_yaml_path)
+
+        images_with_person, class_bbox_count, class_image_count = \
+            await load_image_groups(images_path, labels_path, data_yaml_path)
+
+        all_images = get_files(images_path, "jpg")
+
+        all_img_size_stats, all_width_list, all_height_list, all_proportions_list = \
+            get_image_size(all_images, images_path)
+        person_img_size_stats, person_width_list, person_height_list, person_proportions_list = \
+            get_image_size(all_images, images_path, images_with_person)
+        all_img_count = all_img_size_stats.get('image_count')
+        person_img_count = person_img_size_stats.get('image_count')
+
+        # 1
+        people_presence = person_img_count / all_img_count
+
+        # 2
+        images_wo_person = [img for img in all_images if img not in (images_with_person or [])]
+        no_person_img_size_stats, no_person_width_list, no_person_height_list, no_person_proportions_list = \
+            get_image_size(all_images, images_path, images_wo_person)
+        dist_img_width_groups = (person_width_list, no_person_width_list)
+
+        # 3
+        dist_img_heights_groups = (person_height_list, no_person_height_list)
+
+        # 4
+        dist_img_ratios_groups = (person_proportions_list, no_person_proportions_list)
+
+        # 5
+        hitmap_all = await get_bboxes_heatmap(all_images, images_path, labels_path, class_names)
+        hitmap_person = await get_bboxes_heatmap(images_with_person, images_path, labels_path, class_names)
+
+        return EDAResponse(
+            people_presence=people_presence,
+            dist_img_width_groups=dist_img_width_groups,
+            dist_img_heights_groups=dist_img_heights_groups,
+            dist_img_ratios_groups=dist_img_ratios_groups,
+            hitmap_all=hitmap_all,
+            hitmap_person=hitmap_person
         )
 
-    model_path = Path(f"./models/{loaded_model}.pkl")
-    svm = joblib.load(model_path)
-    probas = svm.predict_proba(np.vstack(df_processed["features"]))[:, 1]
-    df_processed["probability"] = probas
+    # Отлавливаем HTTPException, переданные вызываемыми внутри функциями
+    except HTTPException as e:
+        raise e
 
-    df_person = df_processed[df_processed["probability"] > 0.85].reset_index(drop=True)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Произошла ошибка: {str(e)}."
+        )
 
-    df_person["patch"] = df_person["patch"].apply(lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
-    response_json = df_person[["index", "bbox", "probability"]].to_dict(orient="records")
-
-    return PredictResponse(
-        model_id=loaded_model,
-        data=response_json
-    )
 
 @app.post("/models_info", response_model=ModelsInfoResponse)
-async def models_info(request: ModelsInfoRequest) -> ModelsInfoResponse:
+async def models_info(request: ModelsInfoRequest):
+    """
+    Метрики качества модели
+    """
     models_info_path = Path("models_info")
 
     if not models_info_path.exists() or not models_info_path.is_dir():
@@ -372,69 +464,43 @@ async def models_info(request: ModelsInfoRequest) -> ModelsInfoResponse:
 
     return ModelsInfoResponse(models_info_json)
 
-@app.post("/eda", response_model=EDAResponse)
-async def eda(request: EDARequest) -> EDAResponse:
-    try:
-        data_yaml_path = uploaded_data_paths["data_yaml_path"]
-        images_path = uploaded_data_paths["images_path"]
-        labels_path = uploaded_data_paths["labels_path"]
 
-        image_files = get_files(images_path, "jpg")
-        label_files = get_files(labels_path, "txt")
+@app.delete("/remove_all", response_model=RemoveResponse)
+async def remove_all():
+    """
+    Удаление из памяти и с диска всех моделей и их файлов, кроме дефолтных
+    """
+    removed_models = []
 
-        class_names = load_classes(data_yaml_path)
+    for model_id in list(models.keys()):
+        if not model_id.startswith("default_"):
+            # Удаляем с диска
+            model_path = Path(f"./models/{model_id}.pkl")
+            model_info_path = Path(f"./models_info/{model_id}.json")
+            if model_path.exists():
+                try:
+                    model_path.unlink()
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Ошибка удаления файла модели '{model_id}': {str(e)}"
+                    )
+            if model_info_path.exists():
+                try:
+                    model_info_path.unlink()
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Ошибка удаления файла метрик модели '{model_id}': {str(e)}"
+                    )
+            # Удаляем из памяти
+            removed_models.append(
+                RemoveResponseItem(
+                    message=f"Model '{model_id}' removed"
+                )
+            )
+            del models[model_id]
+            if model_id in loaded_models:
+                del loaded_models[model_id]
 
-        all_img_size_stats, all_width_list, all_height_list, all_proportions_list = get_image_size(all_images)
-        person_img_size_stats, person_width_list, person_height_list, person_proportions_list = get_image_size(all_images, images_with_person)
-        all_img_count = all_img_size_stats.get('image_count')
-        person_img_count = person_img_size_stats.get('image_count')
-
-        # 1
-        eda_data["get_people_presence"] = f"Люди присутствуют на {round(person_img_count/all_img_count,2)*100}% изображений"
-
-        # 2
-        images_wo_person = [img for img in all_images if img not in (images_with_person or [])]
-        no_person_img_size_stats, no_person_width_list, no_person_height_list, no_person_proportions_list \
-            = get_image_size(all_images, images_wo_person)
-        eda_data["distrib_img_width_groups"] = (person_width_list, no_person_width_list)
-
-        # 3
-        eda_data["distrib_img_heights_groups"] = (person_height_list, no_person_height_list)
-
-        # 4
-        eda_data["distrib_img_ratios_groups"] = (person_proportions_list, no_person_proportions_list)
-
-        # 5
-        # Check upload data
-
-        # 6
-        eda_data["hitmap_all"] = get_bboxes_heatmap(all_images)
-        eda_data["hitmap_person"] = get_bboxes_heatmap(images_with_person)
-
-    except Exception as e:
-        return EDAResponse(
-            status="Error",
-            message=f"Ошибка: {str(e)}"
-        )
-
-
-    if loaded_model is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Активных моделей не найдено. Используйте метод set_model, чтобы активировать модель."
-        )
-
-    model_path = Path(f"./models/{loaded_model}.pkl")
-    svm = joblib.load(model_path)
-    probas = svm.predict_proba(np.vstack(df_processed["features"]))[:, 1]
-    df_processed["probability"] = probas
-
-    df_person = df_processed[df_processed["probability"] > 0.85].reset_index(drop=True)
-
-    df_person["patch"] = df_person["patch"].apply(lambda x: x.tolist() if isinstance(x, np.ndarray) else x)
-    response_json = df_person[["index", "bbox", "probability"]].to_dict(orient="records")
-
-    return PredictResponse(
-        model_id=loaded_model,
-        data=response_json
-    )
+    return RemoveResponse(root=removed_models)
