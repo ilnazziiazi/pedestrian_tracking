@@ -14,9 +14,9 @@ from ml_pipeline import processing_and_train, process_inference_image
 from pathlib import Path
 from src_eda import get_image_size, get_bboxes_heatmap
 from contextlib import asynccontextmanager
-
-sys.path.append('../')
 from utils.utils import get_logger
+
+
 logger = get_logger("service_fastapi")
 
 @asynccontextmanager

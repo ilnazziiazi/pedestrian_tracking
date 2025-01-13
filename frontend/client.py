@@ -8,9 +8,9 @@ import pandas as pd
 from PIL import Image
 import cv2
 import numpy as np
-
-sys.path.append('../')
 from utils.utils import get_logger
+
+
 logger = get_logger("streamlit_client")
 
 logger.info("Запуск приложения")
