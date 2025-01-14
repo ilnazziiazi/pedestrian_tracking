@@ -15,7 +15,9 @@ logger = get_logger("streamlit_client")
 
 logger.info("Запуск приложения")
 
-BASE_URL = "http://127.0.0.1:8000"
+#BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "http://backend:8000"
+
 ALLOWED_IMAGE_TYPES = ["jpg", "jpeg", "png"]
 DEFAULT_TIMEOUT = 10
 DEFAULT_MAX_ITER = 1000
