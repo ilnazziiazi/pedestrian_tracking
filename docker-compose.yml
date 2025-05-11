@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: backend
+    ports:
+      - "8000:8000"
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      YOLO_MODEL_FILENAME: yolov11.pt
+    volumes:
+      - ./models:/app/models
+      - backend_temp_uploads:/app/temp_uploads
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 'all'
+              capabilities: [gpu]
+    # restart: unless-stopped
+
+  telegram_bot:
+    build:
+      context: ./telegram_bot
+    container_name: telegram_bot
+    depends_on:
+      - backend
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      FASTAPI_BACKEND_URL: http://backend:8000/api/v1
+    volumes:
+      - ./telegram_bot/app:/app
+    # restart: unless-stopped
+
+volumes:
+  backend_temp_uploads:
+  telegram-bot-api-data:
