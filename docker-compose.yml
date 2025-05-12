@@ -20,7 +20,7 @@ services:
             - driver: nvidia
               count: 'all'
               capabilities: [gpu]
-    # restart: unless-stopped
+    restart: unless-stopped
 
   telegram_bot:
     build:
@@ -33,7 +33,7 @@ services:
       FASTAPI_BACKEND_URL: http://backend:8000/api/v1
     volumes:
       - ./telegram_bot/app:/app
-    # restart: unless-stopped
+    restart: unless-stopped
 
 volumes:
   backend_temp_uploads:
