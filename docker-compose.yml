@@ -1,26 +1,32 @@
 services:
-  service:
-    build: service
+  backend:
+    build:
+      context: ./service
+      dockerfile: Dockerfile
     ports:
       - 8000:8000
     volumes:
       - ./service:/app
     restart: always
     networks:
-      - app
+      - deploy_network
     container_name: server_app
 
   frontend:
-    build: frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - 8501:8501
+    depends_on:
+      - backend
     volumes:
       - ./frontend:/app
     restart: always
     networks:
-      - app
+      - deploy_network
     container_name: client_app
 
 networks:
-  app:
+  deploy_network:
     driver: bridge
