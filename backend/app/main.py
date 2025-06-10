@@ -32,17 +32,52 @@ async def background_video_processing_task(
     experiment_output_dir: str | None = None
 
     try:
-        processed_video_path, pedestrian_count = yolo_video_processor.process_and_track_video(temp_input_video_path)
-        
-        task_duration = time.time() - task_start_time
-        logger.info(f"Видео {temp_input_video_path} обработано за {task_duration:.2f} сек.")
+        processed_video_path, pedestrian_count, trajectories, boxes_per_frame = (yolo_video_processor.process_and_track_video(temp_input_video_path))
+        final_video_path = processed_video_path
 
         caption = (
             f"✅ Видео обработано!\n"
-            f"🚶‍♂️ Обнаружено уникальных пешеходов: {pedestrian_count}\n"
-            f"⏱ Время обработки видео: {task_duration:.1f} сек."
+            f"🚶‍♂️ Уникальных пешеходов: {pedestrian_count}\n"
         )
-        send_success = await send_video(chat_id, processed_video_path, caption)
+
+        if trajectories and boxes_per_frame:
+            try:
+                clustered_video_path, cluster_counts = yolo_video_processor.clusters_visualize(
+                    input_video_path=temp_input_video_path,
+                    trajectories=trajectories,
+                    boxes_per_frame=boxes_per_frame,
+                    output_path=os.path.dirname(processed_video_path)
+                )
+                if clustered_video_path:
+                    final_video_path = clustered_video_path
+
+                noise_tracks = cluster_counts.get(-1, 0)
+                total_tracks = sum(cluster_counts.values())
+                if total_tracks > 0:
+                    noise_ratio = (noise_tracks / total_tracks) * 100
+                else:
+                    noise_ratio = 0.0
+
+                clusters_info = "\n".join(
+                    f"Кластер {cid+1}: число пешеходов {count}"
+                    for cid, count in sorted(cluster_counts.items())
+                    if cid != -1
+                )
+
+                if clusters_info:
+                    caption += f"{clusters_info}\n"
+                caption += f"Пешеходов, не попавших в кластеры: {noise_tracks} ({noise_ratio:.1f}% от общего числа)\n"
+
+            except ValueError as ve:
+                logger.warning(f"Кластеризация не выполнена: {ve}")
+                caption += "⚠️ Не удалось выделить кластеры движения.\n"
+                final_video_path = processed_video_path
+
+        task_duration = time.time() - task_start_time
+        logger.info(f"Видео {temp_input_video_path} обработано за {task_duration:.2f} сек.")
+        caption += f"⏱ Время обработки видео: {task_duration:.1f} сек."
+
+        send_success = await send_video(chat_id, final_video_path, caption)
         if not send_success:
             await send_message(chat_id, "Не удалось отправить обработанное видео. Пожалуйста, попробуйте позже или проверьте настройки бота.")
 
