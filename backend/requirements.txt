@@ -7,3 +7,7 @@ ultralytics
 lap
 numpy
 python-multipart
+pandas
+seaborn
+scikit-learn
+kneed
