@@ -1,28 +1,28 @@
-## Выводы по EDA
-- Люди присутствуют на 88.0% изображений
-- Статистика по всем картинкам:
-    - avg_width: 1503
-    - avg_height: 982
-    - avg_proportion: 1.57
-    - min_width: 480
+## EDA conclusions
+- People are present in 88.0% of images
+- Statistics for all images:
+- avg_width: 1503
+- avg_height: 982
+- avg_proportion: 1.57
+- min_width: 480
     - min_height: 360
     - min_proportion: 1.33
     - max_width: 2000
     - max_height: 1500
     - max_proportion: 1.78
     - image_count: 6990
-- Фото имеют разный размер (и отношение сторон не 1 к 1)
-- Тк. на большей части фото присутствуют люди, средние размеры всего датасета не сильно отличаются от размера изображений с обязательным присутствием людей. Посмотрим на распределение размеров по группам (есть люди на фото / нет людей), чтобы убедиться, что между ними нет смещений
-- Фотографий без людей сильно меньше, но для нашей задачи этот дисбаланс не является проблемой, цель проекта – детекция и трекинг людей в местах массового скопления. Отметим, что это просто положительный момент для обучения, что будут встречаться наблюдения без людей (должны препятствовать переобучению)
-- Распределения размеров и пропорций в группах изображений с людьми и без – одинаковые. Изображения должны быть похожего качества, что также характеризует датасет положительно, чтобы дальше обучаться на нем
-- Самое большое число изображений и бибоксов в разрезе класса принадлежит автомобилям, за ним – люди. БОльшая часть снимков датасета собрана на дорогах, поэтому такое распределение классов понятно.
-- В среднем число людей на фото меньше совокупного числа других размеченных объектов.
-- Распределение бибоксов логнормальное — на фото мы увидем сразу несколько размеченных объектов, а не один.
-- Распределение числа людей имеет логарифмическую форму с длинным хвостом – основная часть снимков низкоплотные по классу Person, но должны встречаться и снимки очень людных мест.
-- Из всех размеченных классов в датасете, бибоксы с людьми занимают самую маленькую площадь. Это ожидаемо, т.к. остальные классы – это транспортные средства, которые очевидно крупнее.
-- Распределение площади бибоксов с людьми логарифмическое. БОльшая часть значений сосредоточена около 0 – для нас это значит, что в датасете больше снимков с высоты / издалека, чем с близкого расстояния
-- По всем классам слева от центра изображения находится 190583 бибоксов, справа – 179741
-- По классу Person слева от центра изображения находится 61052 бибоксов, справа – 58786
-- На ~4% больше бибоксов с людьми находится слева от центра изображения, чем справа. Можно будет учесть это при аугментации
-- Бибоксы всех классов сосредоточены в центре изображения. 
-- По задетектированным людям хитмап менее плотно сконцентрирован в центре, однако назвать плотность распределение бибоксов равномерным относительно всей площади фото нельзя. Это также можно учитывать при аугментации, уделив внимание смещению
+- Photos vary in size (and aspect ratio is not 1:1)
+- Since most photos contain people, the average sizes of the entire dataset do not differ significantly from the size of images with the mandatory presence of people. Let's look at the distribution of sizes by group (people in the photo / no people) to make sure there are no shifts between them
+- There are significantly fewer photos without people, but this imbalance is not a problem for our task, as the goal of the project is to detect and track people in crowded places. Note that this is simply a positive aspect for training, as there will be observations without people (which should prevent overfitting).
+- The distribution of sizes and proportions in groups of images with and without people is the same. The images should be of similar quality, which also characterizes the dataset positively, so that it can be used for further training.
+- The largest number of images and bounding boxes in the class belongs to cars, followed by people. Most of the images in the dataset were collected on roads, so this class distribution is understandable.
+- On average, the number of people in a photo is less than the total number of other labeled objects.
+- The distribution of bounding boxes is lognormal — in a photo, we will see several labeled objects at once, not just one.
+- The distribution of the number of people has a logarithmic shape with a long tail — most of the images are low-density in the Person class, but there should also be images of very crowded places.
+- Of all the labeled classes in the dataset, bounding boxes with people occupy the smallest area. This is to be expected, since the other classes are vehicles, which are obviously larger.
+- The distribution of the area of bounding boxes with people is logarithmic. Most of the values are concentrated around 0, which means that there are more images taken from a height/distance than from a close distance in the dataset.
+- Across all classes, there are 190,583 bounding boxes to the left of the center of the image and 179,741 to the right.
+- For the Person class, there are 61,052 bounding boxes to the left of the image center and 58,786 to the right.
+- There are ~4% more bounding boxes with people to the left of the image center than to the right. This can be taken into account during augmentation.
+- Bounding boxes of all classes are concentrated in the center of the image.
+- For detected people, the heatmap is less densely concentrated in the center, but the density distribution of bounding boxes cannot be called uniform across the entire area of the photo. This can also be taken into account during augmentation by paying attention to the shift.

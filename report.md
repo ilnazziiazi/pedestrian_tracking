@@ -1,101 +1,102 @@
-# Техническая документация
+# Technical Documentation
 
-## Структура проекта
+## Project Structure
 
-Проект состоит из трех основных компонентов:
+The project consists of three main components:
 
-1. **Фронтенд (Streamlit)**
-   - Расположен в `/frontend`
-   - Основной файл: `client.py`
-   - Предоставляет интерактивный интерфейс для:
-     - Загрузки данных и EDA
-     - Обучения моделей
-     - Просмотра информации о моделях
-     - Получения предсказаний
+1. **Frontend (Streamlit)**
+   - Located in `/frontend`
+   - Main file: `client.py`
+   - Provides an interactive interface for:
+     - Data loading and EDA
+     - Model training
+     - Viewing model information
+     - Obtaining predictions
 
-2. **Бэкенд сервис (FastAPI)**
-   - Расположен в `/service`
-   - Основной файл: `app.py`
-   - Предоставляет REST API эндпоинты для:
-     - Управления данными
-     - Обучения моделей
-     - Оценки моделей
-     - Получения предсказаний
+2. **Backend service (FastAPI)**
+   - Located in `/service`
+   - Main file: `app.py`
+   - Provides REST API endpoints for:
+     - Data management
+     - Model training
+     - Model evaluation
+     - Obtaining predictions
 
-3. **ML пайплайн**
-   - Расположен в `/service/ml_pipeline.py`
-   - Отвечает за:
-     - Предобработку изображений
-     - Извлечение признаков с помощью ResNet50
-     - Обучение SVM
-     - Оценку моделей
+3. **ML pipeline**
+   - Located in `/service/ml_pipeline.py`
+   - Responsible for:
+     - Image preprocessing
+     - Feature extraction using ResNet50
+     - SVM training
+     - Model evaluation
 
-## API документация
 
-### Управление данными
-- `POST /upload_data`: Загрузка и распаковка датасета
-- `GET /eda`: Получение результатов разведочного анализа
+## API Documentation
 
-### Управление моделями
-- `POST /fit`: Обучение новой SVM модели
-- `GET /list_models`: Список доступных моделей
-- `POST /set_model`: Активация модели для инференса
-- `POST /models_info`: Получение детальных метрик моделей
-- `DELETE /remove_all`: Удаление всех не дефолтных моделей
+### Data Management
+- `POST /upload_data`: Upload and unpack a dataset
+- `GET /eda`: Get exploratory analysis results
 
-### Инференс
-- `POST /predict`: Получение предсказаний для загруженного изображения
+### Model Management
+- `POST /fit`: Train a new SVM model
+- `GET /list_models`: List available models
+- `POST /set_model`: Activate model for inference
+- `POST /models_info`: Get detailed model metrics
+- `DELETE /remove_all`: Delete all non-default models
 
-## Интерфейс Streamlit
+### Inference
+- `POST /predict`: Get predictions for uploaded image
 
-Интерфейс состоит из 4 основных разделов:
+## Streamlit Interface
 
-1. **Загрузка данных и EDA**
-   - Загрузка ZIP архива с датасетом
-   - Просмотр статистики датасета
-   - Визуализация распределений
+The interface consists of 4 main sections:
 
-2. **Обучение моделей**
-   - Настройка гиперпараметров SVM
-   - Обучение новых моделей
-   - Отслеживание процесса обучения
+1. **Data loading and EDA**
+   - Loading a ZIP archive with a dataset
+   - Viewing dataset statistics
+   - Visualizing distributions
 
-3. **Информация о моделях**
-   - Сравнение моделей
-   - Просмотр метрик (Accuracy, Precision, Recall, F1)
-   - Сравнение ROC и PR кривых
+2. **Model training**
+   - Configuring SVM hyperparameters
+   - Training new models
+   - Tracking the training process
 
-4. **Инференс модели**
-   - Выбор активной модели
-   - Загрузка изображений
-   - Просмотр предсказаний
+3. **Model information**
+   - Comparing models
+   - Viewing metrics (Accuracy, Precision, Recall, F1)
+   - Comparison of ROC and PR curves
 
-## Быстрый старт
+4. **Model inference**
+   - Selecting an active model
+   - Loading images
+   - Viewing predictions
 
-### Тестовые данные
-Для тестирования функциональности приложения можно использовать данные из папки `/test_data`, которая содержит:
-- Пример изображения для инференса
-- Тестовый датасет в ZIP архиве для обучения моделей
+## Quick Start
 
-### Запуск через Docker
+### Test Data
+To test the functionality of the application, you can use data from the `/test_data` folder, which contains:
+- Sample image for inference
+- Test dataset in a ZIP archive for model training
 
-1. Сборка образов:
+### Start with Docker
+
+1. Build images:
 ```bash
 docker compose build
 ```
-2. Запуск сервиса:
+2. Start service:
 ```bash
-docker compose up
+docker compose up -d
 ```
-### Локальный запуск
+### Start without Docker
 
-1. Запуск бэкенд сервиса:
+1. Start backend service:
 ```bash
 cd service
 pip install -r requirements.txt
 uvicorn app:app --reload
 ```
-2. Запуск Streamlit интерфейса:
+2. Start Streamlit frontend:
 ```bash
 cd frontend
 pip install -r requirements.txt
