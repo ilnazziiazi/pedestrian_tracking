@@ -10,7 +10,7 @@ A service was created to identify pedestrians in videos, calculate pedestrian tr
 ## To run, you need to:
 1. Add a .env file to the project root.
 2. Install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) to work with the GPU.
-3. Add the model [weights](https://drive.google.com/file/d/1L8H0u8CHvF3oKpP4jApN2guUblrAq0sW/view?usp=share_link) to the `models/yolov11.pt` folder.
+3. Add the model [weights](https://drive.google.com/file/d/1L8H0u8CHvF3oKpP4jApN2guUblrAq0sW/view?usp=share_link) to the `models/yolov12.pt` folder.
 4. Run `docker compose up --build`.
 
 
